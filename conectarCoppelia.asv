@@ -1,0 +1,62 @@
+clc; clear all; close all
+
+% Conexão com o Coppelia
+objetoAPI_remota = remApi('remoteApi');
+objetoAPI_remota.simxFinish(-1);
+
+id = objetoAPI_remota.simxStart('127.0.0.1', 19000, true, true, 5000, 5);
+
+if id < 0
+    disp('Falha ao tentar conectar o CoppeliaSim com o matlab')
+    objetoAPI_remota.delete;
+    return;
+else
+    fprintf('Conexão do id(%d) ao servidor da API remota foi aberta!!\n', id);
+end
+
+% Obter manipuladores de objetos
+[err, manipulador_da_camera] = objetoAPI_remota.simxGetObjectHandle(id, 'visionSensor', objetoAPI_remota.simx_opmode_oneshot_wait);
+[err, manipulador_da_base_robo] = objetoAPI_remota.simxGetObjectHandle(id, 'UR10', objetoAPI_remota.simx_opmode_oneshot_wait);
+[err, manipulador_de_objetivo] = objetoAPI_remota.simxGetObjectHandle(id, 'goalPose', objetoAPI_remota.simx_opmode_oneshot_wait);
+% Obter posições fixas
+[err, camera_rel_base] = objetoAPI_remota.simxGetObjectPosition(id,manipulador_da_camera, manipulador_da_base_robo, objetoAPI_remota.simx_opmode_oneshot_wait);
+
+% Obter imagem
+[err, resol, img] = objetoAPI_remota.simxGetVisionSensorImage2(id, manipulador_da_camera, 0, objetoAPI_remota.simx_opmode_oneshot_wait);
+imshow(img)
+pause(1);
+
+% A camera pega uma area de 60 graus, precisamos da metade disso.
+% A tan(alfa/2) = x/z
+real_resol = 2 * tan(pi/6) * camera_rel_base(3);
+res = size(img, 1:2);
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%-----Biblioteca de detecção de bordas-------%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% load pre-trained edge detection model and set opts (see edgesDemo.m)
+model=load('models/forest/modelBsds'); model=model.model;
+model.opts.multiscale=0; model.opts.sharpen=2; model.opts.nThreads=4;
+
+%% set up opts for edgeBoxes (see edgeBoxes.m)
+opts = edgeBoxes;
+opts.alpha = .65;     % step size of sliding window search
+opts.beta  = .25;     % nms threshold for object proposals
+opts.minScore = .20;  % min score of boxes to detect
+opts.maxBoxes = 20;  % max number of boxes to detect
+
+tic, bbs=edgeBoxes(img,model,opts); toc
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+for i = 1:size(bbs,1)
+    rectangle("Position", bbs(i,1:4), "LineWidth", 2);
+
+    xpix = bbs(i,1) + bbs(i,3)/2;
+    x_cubo_rel_camera = real_resol/2 - xpix * real_resol / res(1);
+    ypix = bbs(i,2) + bbs(i,4)/2;
+    y_cubo_rel_camera = real_resol/2 - ypix * real_resol / res(2);
+
+    x_cubo_rel_base = camera_rel_base(1) + x_cubo_rel_camera;
+    y_cubo_rel_base = camera_rel_base(2) - y_cubo_rel_camera;
+    z_cubo_rel_base = 0.08;
+
+    err = objetoAPI_remota.simxSetObjectPosition(id, manipulador_de_objetivo, manipulador_da_base_robo, [x_cubo_rel_base,y_cubo_rel_base, z_cubo_rel_base], objetoAPI_remota.simx_opmode_oneshot_wait);
+end

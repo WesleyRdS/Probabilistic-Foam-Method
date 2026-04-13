@@ -46,7 +46,7 @@ mapa2D = ~mapa_filtrado;
 %----------------------------Geração de mapa 3D---------------------------
 % Cria relevo continuo ao multiplicar a matriz por 5 e aplicar suavização
 %gaussiana
-altura_base = imgaussfilt(double(mapa2D)*100, 3);
+altura_base = imgaussfilt(double(mapa2D)*30, 3);
 altura_base = round(altura_base);
 
 altura_base(altura_base < 1) = 0;
@@ -283,13 +283,9 @@ end
 [err, manipulador_de_destino] = objetoAPI_remota.simxGetObjectHandle(id, 'destino', objetoAPI_remota.simx_opmode_blocking)
 Escala = 0.01;
 
-objetoAPI_remota.simxSetObjectPosition(id, manipulador_de_partida, -1, partida*Escala, objetoAPI_remota.simx_opmode_blocking);
-objetoAPI_remota.simxSetObjectPosition(id, manipulador_de_destino, -1, destino*Escala, objetoAPI_remota.simx_opmode_blocking);
-pause(2);
-
 objetoAPI_remota.simxSetObjectPosition(id, manipulador_de_alvo, -1, partida*Escala, objetoAPI_remota.simx_opmode_blocking);
-pause(2);
-
+objetoAPI_remota.simxSetObjectPosition(id, manipulador_de_alvo, -1, partida*Escala, objetoAPI_remota.simx_opmode_blocking);
+objetoAPI_remota.simxSetObjectPosition(id, manipulador_de_alvo, -1, partida*Escala, objetoAPI_remota.simx_opmode_blocking);
 for i = 1:size(caminho, 1)
     objetoAPI_remota.simxSetObjectPosition(id, manipulador_de_alvo, -1, caminho(i,:)*Escala, objetoAPI_remota.simx_opmode_blocking);
     pause(1);
