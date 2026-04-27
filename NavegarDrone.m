@@ -1,0 +1,429 @@
+clc; clear; close all;
+
+%Função que calcula a menor distancia entre um ponto P e um triangulo ABC
+%no espaço
+function distancia = DistanciaPontoTriangulo(triangulo, ponto)
+    %Vertices do triangulo
+    vertice_A = triangulo(1, :);
+    vertice_B = triangulo(2, :);
+    vertice_C = triangulo(3, :);
+    
+    %Arestas do triangulo
+    arestas_AB = vertice_B - vertice_A;
+    arestas_AC = vertice_C - vertice_A;
+    arestas_BC = vertice_C - vertice_B;
+    
+    %Vetor entre ponto e vertices do triangulo
+    vetor_AP = ponto - vertice_A;
+    vetor_BP = ponto - vertice_B;
+    vetor_CP = ponto - vertice_C;
+
+    %Ponto localizado na região do vertice A
+    
+    %Quando P avança na direção de AB a partir de A
+    d1 = dot(arestas_AB, vetor_AP);
+    %Quando P avança na direção de AC a partir de A
+    d2 = dot(arestas_AC, vetor_AP);
+    %Se P esta antes de A na direção AB
+    % e P tambem esta antes de A na direção
+    if d1 <= 0 && d2 <= 0
+        distancia = norm(vetor_AP);
+        return
+    end
+
+    %Ponto localizado na região do vertice B
+
+    %Quando P avança na direção de AB a partir de B
+    d3 = dot(arestas_AB, vetor_BP);
+    %Quando P avança na direção de AC a partir de B
+    d4 = dot(arestas_AC, vetor_BP);
+    %Se P esta depois de B na direção AB
+    % e se ponto não subiu na direção de AC mais do que avançou em AB
+    if d3 >= 0 && d4 <= d3
+        distancia = norm(vetor_BP);
+        return
+    end
+
+    %Ponto localizado na região da Aresta AB
+    
+    %Verifica se P esta no mesmo lado da aresta AB que o triangulo
+    %   vc > 0 -> Dentro do triangulo
+    %   vc = 0 -> Sobre a aresta AB
+    %   vc < 0 -> Fora, do outro lado
+    vc = d1 * d4 - d3 * d2; %Determinante
+    %Se P esta alinhado com a aresta AB, 
+    %não esta antes de A e não passou por B
+    if vc <= 0 && d1 >= 0 && d3 <= 0
+        %Busca um v, tal que L(v) = A + v*AB
+        %Calculo de peso quando ponto esta perto de B
+        v = d1 / (d1 - d3);
+        %Projeção de ponto na reta AB mais proximo de P
+        proj_P = vertice_A + v * arestas_AB; %Representação da reta  
+        distancia = norm(ponto - proj_P);
+        return
+    end
+
+    %Ponto localizado na região do vertice C
+
+    %Quando P avança na direção de AB a partir de C
+    d5 = dot(arestas_AB, vetor_CP);
+    %Quando P avança na direção de AC a partir de C
+    d6 = dot(arestas_AC, vetor_CP);
+    %Se P está "para frente" na direção de AC
+    %e  P não está indo para dentro do triângulo
+    if d6 >= 0 && d5 <= d6
+        distancia = norm(vetor_CP);
+        return
+    end
+
+    %Ponto localizado na região da aresta AC
+    
+    %P projeta na aresta AC
+    vb = d5*d2 - d1*d6; %Determinante
+    %Se P esta alinhado com a aresta AC, 
+    %não esta antes de A e não passou por C
+    if vb <= 0 && d2 >= 0 && d6 <= 0
+        %Calculo de peso quando ponto esta perto de C
+        w = d2 / (d2 - d6);
+        proj_P = vertice_A + w * arestas_AC;
+        distancia = norm(ponto - proj_P);
+        return
+    end
+
+    %Ponto localizado na região da aresta BC
+    
+    va = d3 * d6 - d5 * d4;%Determinante
+    %va <= 0 - Siginifica que P esta alinhado com BC ou fora do triangulo
+    %(d4 - d3) >= 0 - P não esta voltado para A e esta indo na direção de C
+    sentidoPpatindoB = d4 - d3;
+    %(d5 - d6) >= 0 - Esta dentro da faixa da aresta BC
+    sentidoPpatindoC = d5 - d6;
+    if va <= 0 && sentidoPpatindoB >= 0 && sentidoPpatindoC >= 0
+        w = sentidoPpatindoB / (sentidoPpatindoB + sentidoPpatindoC);
+        proj_P = vertice_B + w * arestas_BC;
+        distancia = norm(ponto - proj_P);
+        return
+    end
+
+    %Ponto localizado no interior do triangulo
+
+    normalizar = 1 / (va + vb + vc); 
+    %Quando o ponto ta perto de B
+    v = vb * normalizar;
+    %Quando o ponto ta perto de C
+    w = vc * normalizar;
+    proj_P = vertice_A + arestas_AB * v + arestas_AC * w;
+    distancia = norm(ponto - proj_P);
+end
+
+%Função otimizada para calcular a menor distancia só com os K triangulos mais
+%proximos(Evita ter que calcular para todos os triangulos dos mapa)
+function distancia = DistanciaKtriangulosProximos(ponto, vertices, faces, arvoreKdimensional, k)
+    
+    %Busca indice dos k triangulos mais proximos
+    indice = knnsearch(arvoreKdimensional, ponto, 'K', k);
+
+    %Definir menor distancia como infinito
+    distancia = inf;
+
+    for i = 1:length(indice)
+        triangulo = vertices(faces(indice(i), :), :);
+        distancia_auxiliar = DistanciaPontoTriangulo(triangulo, ponto);
+        if distancia_auxiliar < distancia
+            distancia = distancia_auxiliar;
+        end
+    end
+
+end
+
+%Função para calcular o raio da bolha 3D
+function raio = calcular_raio(ponto, vertices, faces, arvoreKdimensional, k, z_minimo, z_maximo)
+    %Se o ponto está fora da região vertical permitida, o raio é zero e
+    %ele não é usado
+    if ponto(3) <= z_minimo || ponto(3) >= z_maximo
+        raio = 0;
+        return
+    end
+
+    raio = DistanciaKtriangulosProximos(ponto, vertices, faces, arvoreKdimensional, k);
+    
+    %Garantia para não existir raio 0 
+    raio = max(raio, 0.5);
+end
+
+function detector = ObjetoProximo(ponto, vertices, faces, arvoreKdimensional, k)
+    obstaculoXmetros = DistanciaKtriangulosProximos(ponto, vertices, faces, arvoreKdimensional, k);
+    detector = obstaculoXmetros < 3;
+end
+
+% Interface com RemoteApi do Coppelia
+objetoAPI_remota = remApi('remoteApi');
+% Fechar conexões antigas
+objetoAPI_remota.simxFinish(-1);
+
+id = objetoAPI_remota.simxStart('127.0.0.1', 19000, true, true, 5000, 5);
+
+if id < 0
+    disp('Falha ao tentar conectar o CoppeliaSim com o matlab')
+    objetoAPI_remota.delete;
+    return;
+end
+
+%Manipulador dos objetos na simulação
+%Obs: No matlab ~ significa ignorar valor de saida
+
+%Posição alvo do drone
+[~, alvo] = objetoAPI_remota.simxGetObjectHandle(id, 'alvo', objetoAPI_remota.simx_opmode_blocking);
+%Referencia de local de partida do drone
+[~, ref_partida] = objetoAPI_remota.simxGetObjectHandle(id, 'partida', objetoAPI_remota.simx_opmode_blocking);
+%Referencia do local de destino do drone
+[~, ref_destino] = objetoAPI_remota.simxGetObjectHandle(id, 'destino', objetoAPI_remota.simx_opmode_blocking);
+
+%Obtendo a posição inicial do drone no ambiente 3D. Modo de operação
+%bloqueante. O execução so continua após obeter retorno
+[~, PosInicialDrone] = objetoAPI_remota.simxGetObjectPosition(id, ref_partida*0.36, -1, objetoAPI_remota.simx_opmode_blocking);
+
+%Ler STL. As formas são aproximadas por triangulos
+face_vertex = stlread('modulo3.stl');
+
+%Lista de vertices representados por pontos no espaço. Ex: Va = [Xa Ya Za]
+vertices = face_vertex.Points;
+
+%Lista de conectividade. Cada item representa um triangulo esses triangulos
+%são fornecidos como um indice posicional de cada vertice na lista de
+%pontos. Ex T1 = [Va, Vb, Vc]
+faces = face_vertex.ConnectivityList;
+
+%Calculo do centro geometrico dos triangulos a partir da media dos vertices
+centroides = (vertices(faces(:, 1), :) + vertices(faces(:, 2), :) + vertices(faces(:, 3), :)) / 3;
+
+%KD_Tree para busca rapida. 
+arvoreKdimensional = KDTreeSearcher(centroides);
+
+%Numero de vizinhos a serem pesquisados
+k_vizinhos = 10;
+
+%Limites do mapa 3D
+z_minimo = 3.66;
+z_maximo = 50;
+
+expandir_bolha = @(ponto) calcular_raio(ponto, vertices, faces, arvoreKdimensional, k_vizinhos, z_minimo, z_maximo); 
+
+% Interface 2D para selecionar destino do drone
+
+figure;
+trisurf(faces, vertices(:, 1), vertices(:, 2), vertices(:, 3), 'FaceAlpha', 0.3, 'EdgeColor', 'none');
+view(2)
+axis equal
+title("Selecione o local de destino")
+hold on
+
+ponto = [PosInicialDrone(1), PosInicialDrone(2), PosInicialDrone(3)];
+partida = ponto; %Definindo posição inicial do drone como ponto de partida
+%Plotando na representação superior 2D do mapa a localização do drone
+plot(PosInicialDrone(1), PosInicialDrone(2), 'go', 'LineWidth', 2)
+
+while true
+    [x, y] = ginput(1); %Pega posição do mouse na figura ao clicar
+    ponto = [x, y, z_minimo + 1];
+    if expandir_bolha(ponto) > 0
+        destino = ponto;
+        plot(x, y, 'ro', 'LineWidth', 2)
+        break
+    end
+end
+hold off
+
+
+%Metodo de espuma probabilistica
+
+%Raio minimo da bolha
+raio_minimo = 2; 
+%Controla o numero de filhos gerados
+K = 10;
+%Fator de ponderação para expandir a bolha tambem no eixo z
+fator_z = 2.5;
+
+%Lista de bolhas geradas
+espuma = [];
+%Fila com indice das bolhas a serem processadas
+fila = [];
+
+%Geração da primeira bolha no ponto de partida do drone evitando raio 0
+r0 = max(expandir_bolha(partida), raio_minimo);
+%Matriz onde cada linha indica uma bolhar no formato [x y z raio pai]
+%O indice do pai definido como 0 indica que não existe um pai
+espuma = [partida r0 0];
+%Adicionando indice da primeira bolha a fila
+fila = [1];
+%Flag para parar a geração de bolhas
+encontrou_destino = false;
+
+while ~isempty(fila)
+    
+    %Pegando o primeiro elemento da fila(FIFO)
+    indice = fila(1);
+    %Ramove o elemento da fila
+    fila(1) = [];
+
+    %Obtendo o ponto central da espuma
+    centro = espuma(indice, 1 : 3);
+    %Obtendo raio dessa espuma
+    raio = espuma(indice, 4);
+    %Obtendo o nivel dessa espuma
+    n = espuma(indice, 5) + 1;
+    %Usando a formula para decidir quantos filhos serão gerados
+    n_filhos = max(1, min(50, K * (floor(raio / raio_minimo))^(n - 1)));
+    for i = 1 : n_filhos
+        %Angulo no plano XY
+        theta = 2 * pi * rand;
+        phi = acos(2*rand - 1);
+
+        %Transformação em cordenadas cartezianas
+        dx = raio * sin(phi) *cos(theta);
+        dy = raio * sin(phi) * sin(theta);
+        dz = fator_z * raio * cos(phi);
+
+        %Cria novo ponto candidato a nova bolha
+        novo = centro + [dx dy dz];
+
+        %Vericia se a bolha não esta sendo criada fora dos limites
+        if novo(3)<= z_minimo || novo(3) >= z_maximo
+            continue
+        end
+
+        %Evita sobreposição de bolhas
+        if ~isempty(espuma)
+            distancia = vecnorm(espuma(:,1:3)-novo,2,2);
+            if any(distancia < 0.9 * espuma(:, 4))
+                continue
+            end
+        end
+        
+        %Calcular o novo raio da bolha
+        raio_novo = expandir_bolha(novo);
+
+        %Verifica se o novo raio tem pelo menos o raio minimo necessario
+        if raio_novo < raio_minimo
+            continue
+        end
+
+        espuma = [espuma; novo raio_novo indice];
+        fila = [fila size(espuma, 1)];
+        
+        % Se a bolha esta perto do destino
+        if norm(novo - destino) <= raio_novo
+            raio_destino = expandir_bolha(destino);
+            espuma = [espuma; destino raio_destino size(espuma, 1)]
+            encontrou_destino = true;
+            indice_destino = size(espuma, 1);
+            break
+        end
+    end
+
+    if encontrou_destino
+        break
+    end
+      
+end
+
+%Gerar caminho
+
+%Vetor com os pontos para formar a trajetoria que o drone percorrera
+caminho = [];
+
+if encontrou_destino
+    indice = indice_destino;
+    while indice ~= 0
+        caminho = [espuma(indice, 1 : 3); caminho];
+        indice = espuma(indice, 5);
+    end
+    %Suavizando trajetoria
+    caminho = smoothdata(caminho, 1, 'gaussian', 5);
+end
+
+% Plotar mapa 3D com as bolhas geradas e a trajetoria exibida
+figure; hold on, axis equal, view(3)
+
+trisurf(faces, vertices(:, 1), vertices(:, 2), vertices(:, 3), 'FaceAlpha', 0.2, 'EdgeColor', 'none');
+
+%Transformação: Escalar e transladar a esfera para a posição correta
+for i = 1:size(espuma, 1)
+    [sx, sy, sz] = sphere(6);
+    surf(sx * espuma(i, 4) + espuma(i, 1), sy * espuma(i, 4) + espuma(i, 2), sz * espuma(i, 4) + espuma(i, 3), 'FaceAlpha', 0.05, 'EdgeColor', 'none');
+end
+
+%Plotando caminho
+if ~isempty(caminho)
+    plot3(caminho(:, 1), caminho(:, 2), caminho(:, 3), 'r', 'LineWidth', 3)
+end
+
+plot3(partida(1), partida(2), partida(3), 'go', 'LineWidth', 2)
+plot3(destino(1), destino(2), destino(3), 'ro', 'LineWidth', 2)
+
+title('Mapa 3D: Espuma probabilistica')
+
+% Manipular drone na simulação do CoppeliaSim
+
+%Escala do mapa 3D do copelia no matlab
+escala = 0.36; 
+
+%Mudando posição do objetivo no coppelia
+objetoAPI_remota.simxSetObjectPosition(id, ref_destino, -1, destino * escala, objetoAPI_remota.simx_opmode_blocking);
+
+pause(2);
+
+%Escala de tempo
+dt = 0.01;
+
+%Margem segura de obstaculos
+margem = 0.2;
+
+%Passo maximo no espaço
+passo_maximo = 0.08;
+
+%Variavel para colisão
+colidiu = false;
+
+for i = 1:size(caminho,1) - 1
+
+    %Obtem os proximos dois pontos
+    ponto_1 = caminho(i, :);
+    ponto_2 = caminho(i + 1, :);
+    
+    %Calcula a distancia entre esses pontos
+    distancia = norm(ponto_2 - ponto_1);
+    
+    %Definine o numero de passos
+    numero_de_passos = max(2, floor(distancia / passo_maximo));
+    
+    for t = linspace(0, 1, numero_de_passos)
+        %Interpolação de p1 a p2 ponderado por t
+        ponto_interpolado = (1 - t) * ponto_1 + t * ponto_2;
+        %Distancia do ponto ao obstaculo
+        d = DistanciaKtriangulosProximos(ponto_interpolado, vertices, faces, arvoreKdimensional, k_vizinhos);
+        
+        %Colisão ou risco de colisão
+        if d < margem
+            disp('Possivel colisão detectada')
+            colidiu = true;
+            break
+        end
+
+        %Movimentar drone
+        objetoAPI_remota.simxSetObjectPosition(id, alvo, -1, ponto_interpolado * escala, objetoAPI_remota.simx_opmode_oneshot);
+        %Passo temporal de execução
+        pause(dt);
+    end
+
+    if colidiu
+        break
+    end
+end
+
+if ~colidiu
+    disp("Caminho percorrido com sucesso")
+end
+
+objetoAPI_remota.simxFinish(id);
+objetoAPI_remota.delete();
