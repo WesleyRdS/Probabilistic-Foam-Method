@@ -286,10 +286,10 @@ while ~isempty(fila)
     centro = espuma(indice, 1 : 3);
     %Obtendo raio dessa espuma
     raio = espuma(indice, 4);
-    %Obtendo o nivel dessa espuma
-    n = espuma(indice, 5) + 1;
+    %Dimensão do mapa
+    n_dimensao = 3;
     %Usando a formula para decidir quantos filhos serão gerados
-    n_filhos = max(1, min(50, K * (floor(raio / raio_minimo))^(n - 1)));
+    n_filhos = max(1, min(50, K * (floor(raio / raio_minimo))^(n_dimensao - 1)))
     for i = 1 : n_filhos
         %Angulo no plano XY
         theta = 2 * pi * rand;
@@ -330,7 +330,7 @@ while ~isempty(fila)
         % Se a bolha esta perto do destino
         if norm(novo - destino) <= max(raio_novo, 1.5)
             raio_destino = expandir_bolha(destino);
-            espuma = [espuma; destino raio_destino size(espuma, 1)]
+            espuma = [espuma; destino raio_destino size(espuma, 1)];
             encontrou_destino = true;
             indice_destino = size(espuma, 1);
             break
