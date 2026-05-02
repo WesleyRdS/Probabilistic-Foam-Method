@@ -140,7 +140,7 @@ end
 function raio = calcular_raio(ponto, vertices, faces, arvoreKdimensional, k, z_minimo, z_maximo)
     %Se o ponto está fora da região vertical permitida, o raio é zero e
     %ele não é usado
-    if ponto(3) <= z_minimo || ponto(3) >= z_maximo
+    if ponto(3) < z_minimo || ponto(3) > z_maximo
         raio = 0;
         return
     end
@@ -185,12 +185,12 @@ end
 %Referencia do local de destino do drone
 [~, ref_destino] = objetoAPI_remota.simxGetObjectHandle(id, 'destino', objetoAPI_remota.simx_opmode_blocking);
 
-%NOVO: pegar referência do mapa correto
+%Referência do mapa correto
 [~, ref_mapa] = objetoAPI_remota.simxGetObjectHandle(id, 'modulo3', objetoAPI_remota.simx_opmode_blocking);
 
-%CORRIGIDO: agora pega a posição do mapa (não do alvo)
-[~, pos_mapa] = objetoAPI_remota.simxGetObjectPosition( ...
-    id, ref_mapa, -1, objetoAPI_remota.simx_opmode_blocking);
+%Posição do mapa (não do alvo)
+[~, pos_mapa] = objetoAPI_remota.simxGetObjectPosition(id, ref_mapa, -1, objetoAPI_remota.simx_opmode_blocking);
+
 %Obtendo a posição inicial do drone no ambiente 3D. Modo de operação
 %bloqueante. O execução so continua após obeter retorno
 [~, PosInicialDrone] = objetoAPI_remota.simxGetObjectPosition(id, alvo, -1, objetoAPI_remota.simx_opmode_blocking);
@@ -217,7 +217,10 @@ k_vizinhos = 10;
 
 %Limites do mapa 3D
 z_minimo = 3.66;
-z_maximo = 50;
+z_maximo = 100;
+
+%Margem segura de obstaculos
+margem = 2;
 
 expandir_bolha = @(ponto) calcular_raio(ponto, vertices, faces, arvoreKdimensional, k_vizinhos, z_minimo, z_maximo); 
 
@@ -237,10 +240,10 @@ plot(ponto(1), ponto(2), 'go', 'LineWidth', 2)
 
 while true
     [x, y] = ginput(1); %Pega posição do mouse na figura ao clicar
-    ponto = [x, y, z_minimo + 1];
+    ponto = [x, y, z_minimo];
     if expandir_bolha(ponto) > 0
-        %Adicionando mais 2 metro de altura ao destino 
-        destino = ponto + [0 0 2];
+        %Adicionando mais 8 metro de altura ao destino 
+        destino = ponto + [0 0 8];
         plot(x, y, 'ro', 'LineWidth', 2)
         break
     end
@@ -317,7 +320,7 @@ while ~isempty(fila)
         raio_novo = expandir_bolha(novo);
 
         %Verifica se o novo raio tem pelo menos o raio minimo necessario
-        if raio_novo < raio_minimo
+        if raio_novo < max(raio_minimo, margem)
             continue
         end
 
@@ -385,9 +388,6 @@ pause(2);
 
 %Escala de tempo
 dt = 0.01;
-
-%Margem segura de obstaculos
-margem = 2;
 
 %Passo maximo no espaço
 passo_maximo = 0.08;
