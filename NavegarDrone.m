@@ -146,7 +146,10 @@ function raio = calcular_raio(ponto, vertices, faces, arvoreKdimensional, k, z_m
     end
 
     raio = DistanciaKtriangulosProximos(ponto, vertices, faces, arvoreKdimensional, k);
-    
+    %limitar raio máximo
+    raio_maximo = 100;
+    raio = min(raio, raio_maximo);
+
     %Garantia para não existir raio 0 
     raio = max(raio, 0.5);
 end
@@ -155,6 +158,9 @@ function detector = ObjetoProximo(ponto, vertices, faces, arvoreKdimensional, k)
     obstaculoXmetros = DistanciaKtriangulosProximos(ponto, vertices, faces, arvoreKdimensional, k);
     detector = obstaculoXmetros < 3;
 end
+
+%Escala do mapa 3D do copelia no matlab
+escala = 0.33; 
 
 % Interface com RemoteApi do Coppelia
 objetoAPI_remota = remApi('remoteApi');
@@ -179,9 +185,15 @@ end
 %Referencia do local de destino do drone
 [~, ref_destino] = objetoAPI_remota.simxGetObjectHandle(id, 'destino', objetoAPI_remota.simx_opmode_blocking);
 
+%NOVO: pegar referência do mapa correto
+[~, ref_mapa] = objetoAPI_remota.simxGetObjectHandle(id, 'modulo3', objetoAPI_remota.simx_opmode_blocking);
+
+%CORRIGIDO: agora pega a posição do mapa (não do alvo)
+[~, pos_mapa] = objetoAPI_remota.simxGetObjectPosition( ...
+    id, ref_mapa, -1, objetoAPI_remota.simx_opmode_blocking);
 %Obtendo a posição inicial do drone no ambiente 3D. Modo de operação
 %bloqueante. O execução so continua após obeter retorno
-[~, PosInicialDrone] = objetoAPI_remota.simxGetObjectPosition(id, ref_partida*0.36, -1, objetoAPI_remota.simx_opmode_blocking);
+[~, PosInicialDrone] = objetoAPI_remota.simxGetObjectPosition(id, alvo, -1, objetoAPI_remota.simx_opmode_blocking);
 
 %Ler STL. As formas são aproximadas por triangulos
 face_vertex = stlread('modulo3.stl');
@@ -218,16 +230,17 @@ axis equal
 title("Selecione o local de destino")
 hold on
 
-ponto = [PosInicialDrone(1), PosInicialDrone(2), PosInicialDrone(3)];
+ponto = (PosInicialDrone - pos_mapa) / escala;
 partida = ponto; %Definindo posição inicial do drone como ponto de partida
 %Plotando na representação superior 2D do mapa a localização do drone
-plot(PosInicialDrone(1), PosInicialDrone(2), 'go', 'LineWidth', 2)
+plot(ponto(1), ponto(2), 'go', 'LineWidth', 2)
 
 while true
     [x, y] = ginput(1); %Pega posição do mouse na figura ao clicar
     ponto = [x, y, z_minimo + 1];
     if expandir_bolha(ponto) > 0
-        destino = ponto;
+        %Adicionando mais 2 metro de altura ao destino 
+        destino = ponto + [0 0 2];
         plot(x, y, 'ro', 'LineWidth', 2)
         break
     end
@@ -312,7 +325,7 @@ while ~isempty(fila)
         fila = [fila size(espuma, 1)];
         
         % Se a bolha esta perto do destino
-        if norm(novo - destino) <= raio_novo
+        if norm(novo - destino) <= max(raio_novo, 1.5)
             raio_destino = expandir_bolha(destino);
             espuma = [espuma; destino raio_destino size(espuma, 1)]
             encontrou_destino = true;
@@ -345,12 +358,12 @@ end
 % Plotar mapa 3D com as bolhas geradas e a trajetoria exibida
 figure; hold on, axis equal, view(3)
 
-trisurf(faces, vertices(:, 1), vertices(:, 2), vertices(:, 3), 'FaceAlpha', 0.2, 'EdgeColor', 'none');
+trisurf(faces, vertices(:, 1), vertices(:, 2), vertices(:, 3), 'FaceAlpha', 0.6, 'EdgeColor', 'none', 'FaceColor', [0 0 0]);
 
 %Transformação: Escalar e transladar a esfera para a posição correta
 for i = 1:size(espuma, 1)
     [sx, sy, sz] = sphere(6);
-    surf(sx * espuma(i, 4) + espuma(i, 1), sy * espuma(i, 4) + espuma(i, 2), sz * espuma(i, 4) + espuma(i, 3), 'FaceAlpha', 0.05, 'EdgeColor', 'none');
+    surf(sx * espuma(i, 4) + espuma(i, 1), sy * espuma(i, 4) + espuma(i, 2), sz * espuma(i, 4) + espuma(i, 3), 'FaceAlpha', 0.02, 'EdgeColor', 'none');
 end
 
 %Plotando caminho
@@ -365,11 +378,8 @@ title('Mapa 3D: Espuma probabilistica')
 
 % Manipular drone na simulação do CoppeliaSim
 
-%Escala do mapa 3D do copelia no matlab
-escala = 0.36; 
-
 %Mudando posição do objetivo no coppelia
-objetoAPI_remota.simxSetObjectPosition(id, ref_destino, -1, destino * escala, objetoAPI_remota.simx_opmode_blocking);
+objetoAPI_remota.simxSetObjectPosition(id, ref_destino, -1, (destino * escala) + pos_mapa, objetoAPI_remota.simx_opmode_blocking);
 
 pause(2);
 
@@ -377,7 +387,7 @@ pause(2);
 dt = 0.01;
 
 %Margem segura de obstaculos
-margem = 0.2;
+margem = 2;
 
 %Passo maximo no espaço
 passo_maximo = 0.08;
@@ -411,7 +421,7 @@ for i = 1:size(caminho,1) - 1
         end
 
         %Movimentar drone
-        objetoAPI_remota.simxSetObjectPosition(id, alvo, -1, ponto_interpolado * escala, objetoAPI_remota.simx_opmode_oneshot);
+        objetoAPI_remota.simxSetObjectPosition(id, alvo, -1, (ponto_interpolado * escala)+pos_mapa, objetoAPI_remota.simx_opmode_oneshot);
         %Passo temporal de execução
         pause(dt);
     end
