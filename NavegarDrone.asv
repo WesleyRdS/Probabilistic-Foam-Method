@@ -154,17 +154,9 @@ function raio = calcular_raio(ponto, vertices, faces, arvoreKdimensional, k, z_m
     raio = max(raio, 0.5);
 end
 
-function [latitude, longitude] = PosGPS(x, y, latitude_atual, longitude_atual)
-    
-    %O planeta é esferico então uso uma aproximação plana:
-    %Circunferencia(metros)/360 = 40075000/360
-    latitude_metros_por_grau = 111320; %111,32 km aproximadamente
-    
-    %C = 2*PI*R*cos(teta) -> cosd é o equivalente a cosseno em graus
-    longitude_metros_por_grau = latitude_metros_por_grau * cosd(latitude_atual);
-    
-    latitude = latitude_atual + (y / latitude_metros_por_grau);
-    longitude = longitude_atual + (x / longitude_metros_por_grau);
+function detector = ObjetoProximo(ponto, vertices, faces, arvoreKdimensional, k)
+    obstaculoXmetros = DistanciaKtriangulosProximos(ponto, vertices, faces, arvoreKdimensional, k);
+    detector = obstaculoXmetros < 3;
 end
 
 %Escala do mapa 3D do copelia no matlab
@@ -224,11 +216,11 @@ arvoreKdimensional = KDTreeSearcher(centroides);
 k_vizinhos = 10;
 
 %Limites do mapa 3D
-z_minimo = 4;
+z_minimo = 15;
 z_maximo = 100;
 
 %Margem segura de obstaculos
-margem = 4;
+margem = 2;
 
 expandir_bolha = @(ponto) calcular_raio(ponto, vertices, faces, arvoreKdimensional, k_vizinhos, z_minimo, z_maximo); 
 
@@ -251,7 +243,7 @@ while true
     ponto = [x, y, z_minimo];
     if expandir_bolha(ponto) > 0
         %Adicionando mais 8 metro de altura ao destino 
-        destino = ponto + [0 0 8];
+        destino = ponto + [0 0 2];
         plot(x, y, 'ro', 'LineWidth', 2)
         break
     end
@@ -297,7 +289,7 @@ while ~isempty(fila)
     %Dimensão do mapa
     n_dimensao = 3;
     %Usando a formula para decidir quantos filhos serão gerados
-    n_filhos = max(1, min(50, K * (floor(raio / raio_minimo))^(n_dimensao - 1)))
+    n_filhos = max(1, K * (floor(raio / raio_minimo))^(n_dimensao - 1)))
     for i = 1 : n_filhos
         %Angulo no plano XY
         theta = 2 * pi * rand;
@@ -397,13 +389,12 @@ pause(2);
 %Escala de tempo
 dt = 0.01;
 
-%Passo maximo no espaço
+%Passo maximo no espaço(Distancia maxima de um ponto a outro)
 passo_maximo = 0.05;
 
 %Variavel para colisão
 colidiu = false;
-lat = -12.200846;
-long = -38.971027;
+
 for i = 1:size(caminho,1) - 1
 
     %Obtem os proximos dois pontos
@@ -415,14 +406,15 @@ for i = 1:size(caminho,1) - 1
     
     %Definine o numero de passos
     numero_de_passos = max(2, floor(distancia / passo_maximo));
-    [lat, long] = PosGPS(ponto_2(1), ponto_2(2), lat, long)
+    
     for t = linspace(0, 1, numero_de_passos)
         %Interpolação de p1 a p2 ponderado por t
         ponto_interpolado = (1 - t) * ponto_1 + t * ponto_2;
         %Distancia do ponto ao obstaculo
-        %d = DistanciaKtriangulosProximos(ponto_interpolado, vertices, faces, arvoreKdimensional, k_vizinhos);
+        d = DistanciaKtriangulosProximos(ponto_interpolado, vertices, faces, arvoreKdimensional, k_vizinhos);
+        
         %Colisão ou risco de colisão
-        %if d <= margem
+        %if d < margem
          %   disp('Possivel colisão detectada')
           %  colidiu = true;
            % break
