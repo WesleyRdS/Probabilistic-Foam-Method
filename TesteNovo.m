@@ -1,5 +1,21 @@
 clc; clear; close all;
 
+function direction = goal_biased_direction(parent_center, q_goal, ruido)
+
+    goal_dir = q_goal - parent_center;
+
+    if norm(goal_dir) < 1e-6
+        direction = randn(1,3);
+    else
+        goal_dir = goal_dir / norm(goal_dir);
+
+        direction = goal_dir + ruido*randn(1,3);
+    end
+
+    direction = direction / norm(direction);
+
+end
+
 
 %% ==================== PFM_3D_COMPLETE.M ====================
 % Implementação dos 4 algoritmos do artigo em 3D:
@@ -15,94 +31,209 @@ clc; clear; close all;
 function [rosary, success, stats] = ...
     PFM_STL(q_init, q_goal, expandir_bolha, ...
             r_min, K, z_minimo, z_maximo)
-    % Algoritmo 1 do artigo: Probabilistic Foam Method (versão 3D)
-    
+
     tic;
-    
-    % Inicialização
-    F = {};           % Lista de bolhas
-    Q = {};           % Fila de índices para expansão
-    
-    % Bolha inicial
+
+    F = {};
+
+    Centers = q_init;
+
+    priority_queue = struct( ...
+        'idx',1,...
+        'priority',norm(q_init-q_goal));
+
     r_init = max(expandir_bolha(q_init),r_min);
-    r_init = min(r_init, q_init(3) - z_minimo);
-    F{1} = struct('center', q_init, 'radius', r_init, 'parent', 0);
-    Q{1} = 1;
-    
+    r_init = min(r_init,q_init(3)-z_minimo);
+
+    F{1} = struct( ...
+        'center',q_init,...
+        'radius',r_init,...
+        'parent',0);
+
     max_iter = 3000;
+
     success = false;
     goal_bubble_idx = [];
-    
+
     for iter = 1:max_iter
-        if isempty(Q); break; end
-        
-        parent_idx = Q{1};
-        Q(1) = [];
+
+        if isempty(priority_queue)
+            break;
+        end
+
+        %==================================================
+        % Seleciona bolha mais promissora
+        %==================================================
+
+        [~,best_idx] = min([priority_queue.priority]);
+
+        parent_idx = priority_queue(best_idx).idx;
+
+        priority_queue(best_idx) = [];
+
         parent = F{parent_idx};
-        
-        % Número máximo de bolhas filhas (Equação 2)
-        N = K * floor(parent.radius / r_min);
-        N = max(1, min(N, 30));
-        
+
+        %==================================================
+        % Número de filhos
+        %==================================================
+
+        N = K * ceil(parent.radius/r_min)^2;
+        N = max(5,min(N,80));
+
         for n = 1:N
-            % Direção aleatória uniforme na esfera
-            direction = randn(1, 3);
-            if norm(direction) < 1e-6; continue; end
+
+            %==============================================
+            % Direção guiada ao objetivo
+            %==============================================
+
+            goal_dir = q_goal - parent.center;
+
+            if norm(goal_dir) < 1e-6
+
+                direction = randn(1,3);
+
+            else
+
+                goal_dir = goal_dir / norm(goal_dir);
+
+                direction = goal_dir + 0.35*randn(1,3);
+
+            end
+
             direction = direction / norm(direction);
-            
-            q_surface = parent.center + direction * parent.radius;
-            
+
+            %==============================================
+            % Nova configuração
+            %==============================================
+
+            q_surface = ...
+                parent.center + ...
+                direction * parent.radius;
+
             if q_surface(3) < z_minimo || ...
                q_surface(3) > z_maximo
                 continue;
             end
-            
-            % Verifica se está dentro de outra bolha
-            inside = false;
-            for i = 1:length(F)
-                if norm(q_surface - F{i}.center) < F{i}.radius - 0.1
-                    inside = true;
-                    break;
-                end
+
+            %==============================================
+            % Verifica cobertura
+            %==============================================
+
+            covered = false;
+
+            num_centers = size(Centers,1);
+
+            if num_centers > 1
+
+                k_local = min(30,num_centers);
+
+                idx_near = knnsearch( ...
+                    Centers,...
+                    q_surface,...
+                    'K',k_local);
+
+            else
+
+                idx_near = 1;
+
             end
-            if inside; continue; end
-            
-            % Expande nova bolha
+
+            for kk = 1:length(idx_near)
+
+                i = idx_near(kk);
+
+                if norm(q_surface - F{i}.center) < ...
+                   0.7 * F{i}.radius
+
+                    covered = true;
+                    break;
+
+                end
+
+            end
+
+            if covered
+                continue;
+            end
+
+            %==============================================
+            % Expande bolha
+            %==============================================
+
             r_new = expandir_bolha(q_surface);
-            r_max_permitido = q_surface(3) - z_minimo;
-            r_new = min(r_new, r_max_permitido);
-            if r_new >= r_min
-                new_idx = length(F) + 1;
-                F{new_idx} = struct('center', q_surface, 'radius', r_new, ...
-                                    'parent', parent_idx);
-                Q{end+1} = new_idx;
-                
-                % Verifica goal
-                if norm(q_surface - q_goal) <= r_new
-                    success = true;
-                    goal_bubble_idx = new_idx;
-                    break;
-                end
+
+            r_max_permitido = ...
+                q_surface(3) - z_minimo;
+
+            r_new = min(r_new,r_max_permitido);
+
+            if r_new < r_min
+                continue;
             end
+
+            new_idx = length(F) + 1;
+
+            F{new_idx} = struct( ...
+                'center',q_surface,...
+                'radius',r_new,...
+                'parent',parent_idx);
+
+            Centers(new_idx,:) = q_surface;
+
+            %==============================================
+            % Inserção na fila Best-First
+            %==============================================
+
+            priority_queue(end+1).idx = new_idx;
+
+            priority_queue(end).priority = ...
+                norm(q_surface-q_goal);
+
+            %==============================================
+            % Goal check
+            %==============================================
+
+            if norm(q_surface-q_goal) <= 1.5*r_new
+
+                success = true;
+                goal_bubble_idx = new_idx;
+                break;
+
+            end
+
         end
-        
-        if success; break; end
+
+        if success
+            break;
+        end
+
     end
-    
+
     if success
-        rosary = extract_rosary_3d(F, goal_bubble_idx);
-        stats.path_length = compute_path_length_3d(rosary);
+
+        rosary = ...
+            extract_rosary_3d(...
+            F,...
+            goal_bubble_idx);
+
+        stats.path_length = ...
+            compute_path_length_3d(...
+            rosary);
+
     else
+
         rosary = {};
+
         stats.path_length = inf;
+
     end
-    
+
     stats.time = toc;
     stats.num_bubbles = length(F);
     stats.success = success;
     stats.max_iter = iter;
-end
 
+end
 %% ==================== ALGORITMO 2: GBPF 3D ====================
 function [rosary,success,stats] = ...
 GBPF_STL(...
@@ -114,110 +245,208 @@ GBPF_STL(...
     z_minimo,...
     z_maximo,...
     vertices)
-    % Algoritmo 2 do artigo: Goal-Biased Probabilistic Foam (3D)
-    
+
     tic;
-    
+
     F = {};
-    
-    % Bolha inicial
+
     r_init = max(expandir_bolha(q_init),r_min);
-    r_init = min(r_init, q_init(3) - z_minimo);
-    F{1} = struct('center', q_init, 'radius', r_init, 'parent', 0);
-    
+    r_init = min(r_init,q_init(3)-z_minimo);
+
+    F{1} = struct( ...
+        'center',q_init,...
+        'radius',r_init,...
+        'parent',0);
+
+    Centers = q_init;
+
+    xmin = min(vertices(:,1));
+    xmax = max(vertices(:,1));
+
+    ymin = min(vertices(:,2));
+    ymax = max(vertices(:,2));
+
     max_iter = 3000;
+
     success = false;
     goal_bubble_idx = [];
-    
+
     for iter = 1:max_iter
-        % Amostra q_aux com viés (lines 5-9 do Algorithm 2)
-        if rand() < bias
+
+        %=========================================
+        % Amostragem com viés
+        %=========================================
+
+        if rand < bias
+
             q_aux = q_goal;
+
         else
-            xmin = min(vertices(:,1));
-            xmax = max(vertices(:,1));
-            
-            ymin = min(vertices(:,2));
-            ymax = max(vertices(:,2));
-            
+
             q_aux = [ ...
                 xmin + rand*(xmax-xmin), ...
                 ymin + rand*(ymax-ymin), ...
                 z_minimo + rand*(z_maximo-z_minimo)];
+
         end
-        
-        % Encontra bolha mais próxima (nearest_bubble)
+
+        %=========================================
+        % Busca bolha mais próxima
+        %=========================================
+
         nearest_idx = 1;
-        nearest_dist = norm(F{1}.center - q_aux);
+        nearest_dist = norm(F{1}.center-q_aux);
+
         for i = 2:length(F)
-            dist = norm(F{i}.center - q_aux);
-            if dist < nearest_dist
-                nearest_dist = dist;
+
+            d = norm(F{i}.center-q_aux);
+
+            if d < nearest_dist
+
+                nearest_dist = d;
                 nearest_idx = i;
+
             end
+
         end
-        
+
         parent = F{nearest_idx};
-        
-        % Encontra ponto na superfície mais próximo (nearest_config)
-        direction = q_aux - parent.center;
-        if norm(direction) > 0
-            direction = direction / norm(direction);
+
+        %=========================================
+        % Direção guiada para o objetivo
+        %=========================================
+
+        goal_dir = q_goal - parent.center;
+
+        if norm(goal_dir) < 1e-6
+
+            direction = randn(1,3);
+
         else
-            direction = randn(1, 3);
-            direction = direction / norm(direction);
+
+            goal_dir = goal_dir/norm(goal_dir);
+
+            direction = goal_dir + 0.35*randn(1,3);
+
         end
-    
-        q_near = parent.center + direction * parent.radius;
-        
+
+        direction = direction/norm(direction);
+
+        q_near = ...
+            parent.center + ...
+            direction*parent.radius;
+
         if q_near(3) < z_minimo || ...
            q_near(3) > z_maximo
             continue;
         end
-        
-        % Verifica interior
-        inside = false;
-        for i = 1:length(F)
-            if norm(q_near - F{i}.center) < F{i}.radius - 0.1
-                inside = true;
-                break;
-            end
+
+        %=========================================
+        % Verificação de cobertura
+        %=========================================
+
+        covered = false;
+
+        num_centers = size(Centers,1);
+
+        if num_centers > 1
+
+            k_local = min(30,num_centers);
+
+            idx_near = knnsearch( ...
+                Centers,...
+                q_near,...
+                'K',k_local);
+
+        else
+
+            idx_near = 1;
+
         end
-        if inside; continue; end
-        
-        % Expande nova bolha
+
+        for kk = 1:length(idx_near)
+
+            i = idx_near(kk);
+
+            if norm(q_near - F{i}.center) < ...
+               0.7*F{i}.radius
+
+                covered = true;
+                break;
+
+            end
+
+        end
+
+        if covered
+            continue;
+        end
+
+        %=========================================
+        % Expansão da bolha
+        %=========================================
+
         r_new = expandir_bolha(q_near);
-        r_max_permitido = q_near(3) - z_minimo;
-        r_new = min(r_new, r_max_permitido);
-        if r_new >= r_min
-            new_idx = length(F) + 1;
-            F{new_idx} = struct('center', q_near, 'radius', r_new, ...
-                                'parent', nearest_idx);
-            
-            if norm(q_near - q_goal) <= r_new
-                success = true;
-                goal_bubble_idx = new_idx;
-                break;
-            end
+
+        r_max_permitido = ...
+            q_near(3)-z_minimo;
+
+        r_new = min(r_new,r_max_permitido);
+
+        if r_new < r_min
+            continue;
         end
+
+        new_idx = length(F)+1;
+
+        F{new_idx} = struct( ...
+            'center',q_near,...
+            'radius',r_new,...
+            'parent',nearest_idx);
+
+        Centers(new_idx,:) = q_near;
+
+        %=========================================
+        % Goal Check
+        %=========================================
+
+        if norm(q_near-q_goal) <= 1.5*r_new
+
+            success = true;
+            goal_bubble_idx = new_idx;
+            break;
+
+        end
+
     end
-    
+
     if success
-        rosary = extract_rosary_3d(F, goal_bubble_idx);
-        stats.path_length = compute_path_length_3d(rosary);
+
+        rosary = ...
+            extract_rosary_3d(...
+            F,...
+            goal_bubble_idx);
+
+        stats.path_length = ...
+            compute_path_length_3d(...
+            rosary);
+
     else
+
         rosary = {};
         stats.path_length = inf;
+
     end
-    
+
     stats.time = toc;
     stats.num_bubbles = length(F);
     stats.success = success;
     stats.max_iter = iter;
+
 end
 
 %% ==================== ALGORITMO 3: RBPF 3D ====================
-function [rosary, success, stats] =     RBPF_STL(...
+function [rosary, success, stats] = RBPF_STL(...
     q_init,...
     q_goal,...
     expandir_bolha,...
@@ -225,106 +454,236 @@ function [rosary, success, stats] =     RBPF_STL(...
     K,...
     z_minimo,...
     z_maximo)
-    % Algoritmo 3 do artigo: Radius-Biased Probabilistic Foam (3D)
-    % Roulette Wheel baseado no raio (Equação 6)
-    
+
     tic;
-    
+
     F = {};
-    OpenList = [];
-    
-    % Bolha inicial
+
     r_init = max(expandir_bolha(q_init),r_min);
-    r_init = min(r_init, q_init(3) - z_minimo);
-    F{1} = struct('center', q_init, 'radius', r_init, 'parent', 0);
+    r_init = min(r_init,q_init(3)-z_minimo);
+
+    F{1} = struct( ...
+        'center',q_init,...
+        'radius',r_init,...
+        'parent',0);
+
+    Centers = q_init;
+
     OpenList = 1;
-    
+
     max_iter = 3000;
+
     success = false;
     goal_bubble_idx = [];
-    
-    for iter = 1:max_iter
-        if isempty(OpenList); break; end
-        
-        % Seleção por roleta (Equação 6)
-        radii = zeros(length(OpenList), 1);
-        for i = 1:length(OpenList)
-            radii(i) = F{OpenList(i)}.radius;
-        end
-        
-        if sum(radii) == 0; break; end
-        prob = radii / sum(radii);
-        
-        % Escolhe baseado na probabilidade
-        r = rand();
-        cumsum_prob = cumsum(prob);
-        chosen_idx = find(r <= cumsum_prob, 1, 'first');
-        parent_idx = OpenList(chosen_idx);
-        parent = F{parent_idx};
-        
-        % Remove da OpenList
-        OpenList(chosen_idx) = [];
-        
-        % Número máximo de bolhas filhas
-        N = K * floor(parent.radius / r_min);
-        N = max(1, min(N, 30));
-        
-        for n = 1:N
-            direction = randn(1, 3);
-            if norm(direction) < 1e-6; continue; end
-            direction = direction / norm(direction);
 
-            q_surface = parent.center + direction * parent.radius;
-            
+    for iter = 1:max_iter
+
+        if isempty(OpenList)
+            break;
+        end
+
+        %=========================================
+        % Roleta melhorada
+        %=========================================
+
+        scores = zeros(length(OpenList),1);
+
+        for i = 1:length(OpenList)
+
+            idx = OpenList(i);
+
+            radius = F{idx}.radius;
+
+            dist_goal = ...
+                norm(F{idx}.center - q_goal);
+
+            scores(i) = ...
+                radius^2 / (dist_goal + 1);
+
+        end
+
+        score_sum = sum(scores);
+
+        if score_sum <= 0
+            break;
+        end
+
+        prob = scores / score_sum;
+
+        r = rand();
+
+        chosen_idx = ...
+            find(r <= cumsum(prob),...
+            1,...
+            'first');
+
+        parent_idx = OpenList(chosen_idx);
+
+        parent = F{parent_idx};
+
+        OpenList(chosen_idx) = [];
+
+        %=========================================
+        % Quantidade de filhos
+        %=========================================
+
+        N = K * ceil(parent.radius/r_min)^2;
+
+        N = max(5,min(N,80));
+
+        for n = 1:N
+
+            %=====================================
+            % Direção guiada
+            %=====================================
+
+            goal_dir = ...
+                q_goal - parent.center;
+
+            if norm(goal_dir) < 1e-6
+
+                direction = randn(1,3);
+
+            else
+
+                goal_dir = ...
+                    goal_dir / norm(goal_dir);
+
+                direction = ...
+                    goal_dir + 0.35*randn(1,3);
+
+            end
+
+            direction = ...
+                direction / norm(direction);
+
+            q_surface = ...
+                parent.center + ...
+                direction*parent.radius;
+
             if q_surface(3) < z_minimo || ...
                q_surface(3) > z_maximo
                 continue;
             end
-            
-            % Verifica cobertura
+
+            %=====================================
+            % Verificação de cobertura
+            %=====================================
+
             covered = false;
-            for i = 1:length(F)
-                if norm(q_surface - F{i}.center) < F{i}.radius - 0.1
+
+            num_centers = size(Centers,1);
+
+            if num_centers > 1
+
+                k_local = ...
+                    min(30,num_centers);
+
+                idx_near = knnsearch(...
+                    Centers,...
+                    q_surface,...
+                    'K',...
+                    k_local);
+
+            else
+
+                idx_near = 1;
+
+            end
+
+            for kk = 1:length(idx_near)
+
+                i = idx_near(kk);
+
+                if norm(...
+                    q_surface - F{i}.center) ...
+                    < 0.7*F{i}.radius
+
                     covered = true;
                     break;
+
                 end
+
             end
-            if covered; continue; end
-            
-            r_new = expandir_bolha(q_surface);
-            r_max_permitido = q_surface(3) - z_minimo;
-            r_new = min(r_new, r_max_permitido);
-            if r_new >= r_min
-                new_idx = length(F) + 1;
-                F{new_idx} = struct('center', q_surface, 'radius', r_new, ...
-                                    'parent', parent_idx);
-                OpenList(end+1) = new_idx;
-                
-                if norm(q_surface - q_goal) <= r_new
-                    success = true;
-                    goal_bubble_idx = new_idx;
-                    break;
-                end
+
+            if covered
+                continue;
             end
+
+            %=====================================
+            % Expande bolha
+            %=====================================
+
+            r_new = ...
+                expandir_bolha(q_surface);
+
+            r_max_permitido = ...
+                q_surface(3)-z_minimo;
+
+            r_new = ...
+                min(r_new,r_max_permitido);
+
+            if r_new < r_min
+                continue;
+            end
+
+            new_idx = length(F)+1;
+
+            F{new_idx} = struct( ...
+                'center',q_surface,...
+                'radius',r_new,...
+                'parent',parent_idx);
+
+            Centers(new_idx,:) = q_surface;
+
+            OpenList(end+1) = new_idx;
+
+            %=====================================
+            % Goal check
+            %=====================================
+
+            if norm(q_surface-q_goal) ...
+                <= 1.5*r_new
+
+                success = true;
+                goal_bubble_idx = new_idx;
+                break;
+
+            end
+
         end
-        
-        if success; break; end
+
+        if success
+            break;
+        end
+
     end
-    
+
     if success
-        rosary = extract_rosary_3d(F, goal_bubble_idx);
-        stats.path_length = compute_path_length_3d(rosary);
+
+        rosary = ...
+            extract_rosary_3d(...
+            F,...
+            goal_bubble_idx);
+
+        stats.path_length = ...
+            compute_path_length_3d(...
+            rosary);
+
     else
+
         rosary = {};
+
         stats.path_length = inf;
+
     end
-    
+
     stats.time = toc;
     stats.num_bubbles = length(F);
     stats.success = success;
     stats.max_iter = iter;
-end
 
+end
 %% ==================== ALGORITMO 4: HPF 3D ====================
 function [rosary, success, stats] = HPF_STL(...
     q_init,...
@@ -334,113 +693,232 @@ function [rosary, success, stats] = HPF_STL(...
     K,...
     z_minimo,...
     z_maximo)
-    % Algoritmo 4 do artigo: Heuristic-Guided Probabilistic Foam (3D)
-    % f(q) = g(q) + h(q) (Equação 7)
-    
+
     tic;
-    
+
     F = {};
-    OpenList = struct('idx', {}, 'g', {}, 'h', {}, 'f', {});
-    
-    % Bolha inicial
+
     r_init = max(expandir_bolha(q_init),r_min);
-    r_init = min(r_init, q_init(3) - z_minimo);
-    F{1} = struct('center', q_init, 'radius', r_init, 'parent', 0);
-    
-    g_init = r_init;
-    h_init = norm(q_init - q_goal);
-    f_init = g_init + h_init;
-    
-    OpenList(1).idx = 1;
-    OpenList(1).g = g_init;
-    OpenList(1).h = h_init;
-    OpenList(1).f = f_init;
-    
+    r_init = min(r_init,q_init(3)-z_minimo);
+
+    F{1} = struct( ...
+        'center',q_init,...
+        'radius',r_init,...
+        'parent',0);
+
+    Centers = q_init;
+
+    OpenList = struct( ...
+        'idx',1,...
+        'g',0,...
+        'h',norm(q_init-q_goal),...
+        'f',norm(q_init-q_goal));
+
     max_iter = 3000;
+
     success = false;
     goal_bubble_idx = [];
-    
-    for iter = 1:max_iter
-        if isempty(OpenList); break; end
-        
-        % Seleciona bolha com menor f
-        f_values = [OpenList.f];
-        [~, min_idx] = min(f_values);
-        current = OpenList(min_idx);
-        OpenList(min_idx) = [];
-        
-        parent = F{current.idx};
-        
-        % Número máximo de bolhas filhas
-        N = K * floor(parent.radius / r_min);
-        N = max(1, min(N, 30));
-        
-        for n = 1:N
-            direction = randn(1, 3);
-            if norm(direction) < 1e-6; continue; end
-            direction = direction / norm(direction);
 
-            
-            q_surface = parent.center + direction * parent.radius;
-            
+    for iter = 1:max_iter
+
+        if isempty(OpenList)
+            break;
+        end
+
+        %====================================
+        % Seleção A*
+        %====================================
+
+        [~,best_idx] = min([OpenList.f]);
+
+        current = OpenList(best_idx);
+
+        OpenList(best_idx) = [];
+
+        parent = F{current.idx};
+
+        %====================================
+        % Quantidade de filhos
+        %====================================
+
+        N = K * ceil(parent.radius/r_min);
+        N = max(5,min(N,25));
+
+        for n = 1:N
+
+            %================================
+            % Direção guiada ao objetivo
+            %================================
+
+            goal_dir = q_goal - parent.center;
+
+            if norm(goal_dir) < 1e-6
+
+                direction = randn(1,3);
+
+            else
+
+                goal_dir = goal_dir/norm(goal_dir);
+
+                direction = ...
+                    goal_dir + 0.20*randn(1,3);
+
+            end
+
+            direction = direction/norm(direction);
+
+            q_surface = ...
+                parent.center + ...
+                direction*parent.radius;
+
             if q_surface(3) < z_minimo || ...
                q_surface(3) > z_maximo
                 continue;
             end
-            
-            % Verifica cobertura
+
+            %================================
+            % Verificação de cobertura
+            %================================
+
             covered = false;
-            for i = 1:length(F)
-                if norm(q_surface - F{i}.center) < F{i}.radius - 0.1
+
+            num_centers = size(Centers,1);
+
+            if num_centers > 1
+
+                k_local = min(10,num_centers);
+
+                idx_near = knnsearch(...
+                    Centers,...
+                    q_surface,...
+                    'K',...
+                    k_local);
+
+            else
+
+                idx_near = 1;
+
+            end
+
+            for kk = 1:length(idx_near)
+
+                i = idx_near(kk);
+
+                if norm(q_surface - F{i}.center) ...
+                   < 0.7*F{i}.radius
+
                     covered = true;
                     break;
+
                 end
+
             end
-            if covered; continue; end
-            
+
+            if covered
+                continue;
+            end
+
+            %================================
+            % Expansão da bolha
+            %================================
+
             r_new = expandir_bolha(q_surface);
-            r_max_permitido = q_surface(3) - z_minimo;
-            r_new = min(r_new, r_max_permitido);
-            if r_new >= r_min
-                new_idx = length(F) + 1;
-                F{new_idx} = struct('center', q_surface, 'radius', r_new, ...
-                                    'parent', current.idx);
-                
-                % Calcula custos (Equação 7)
-                g_new = current.g + r_new;
-                h_new = norm(q_surface - q_goal);
-                f_new = g_new + h_new;
-                
-                OpenList(end+1).idx = new_idx;
-                OpenList(end).g = g_new;
-                OpenList(end).h = h_new;
-                OpenList(end).f = f_new;
-                
-                if norm(q_surface - q_goal) <= r_new
-                    success = true;
-                    goal_bubble_idx = new_idx;
-                    break;
-                end
+
+            r_max_permitido = ...
+                q_surface(3)-z_minimo;
+
+            r_new = ...
+                min(r_new,r_max_permitido);
+
+            if r_new < r_min
+                continue;
             end
+
+            new_idx = length(F)+1;
+
+            F{new_idx} = struct( ...
+                'center',q_surface,...
+                'radius',r_new,...
+                'parent',current.idx);
+
+            Centers(new_idx,:) = q_surface;
+
+            %================================
+            % Custos
+            %================================
+
+            g_new = ...
+                current.g + ...
+                norm(q_surface-parent.center);
+
+            h_new = ...
+                norm(q_surface-q_goal);
+
+            % Heurística mais agressiva
+            f_new = g_new + 1.5*h_new;
+
+            OpenList(end+1).idx = new_idx;
+            OpenList(end).g = g_new;
+            OpenList(end).h = h_new;
+            OpenList(end).f = f_new;
+
+            %================================
+            % Limita OpenList
+            %================================
+
+            if length(OpenList) > 1500
+
+                [~,ord] = sort([OpenList.f]);
+
+                OpenList = OpenList(ord(1:1500));
+
+            end
+
+            %================================
+            % Goal Check
+            %================================
+
+            if norm(q_surface-q_goal) ...
+                <= 1.5*r_new
+
+                success = true;
+                goal_bubble_idx = new_idx;
+                break;
+
+            end
+
         end
-        
-        if success; break; end
+
+        if success
+            break;
+        end
+
     end
-    
+
     if success
-        rosary = extract_rosary_3d(F, goal_bubble_idx);
-        stats.path_length = compute_path_length_3d(rosary);
+
+        rosary = ...
+            extract_rosary_3d(...
+            F,...
+            goal_bubble_idx);
+
+        stats.path_length = ...
+            compute_path_length_3d(...
+            rosary);
+
     else
+
         rosary = {};
         stats.path_length = inf;
+
     end
-    
+
     stats.time = toc;
     stats.num_bubbles = length(F);
     stats.success = success;
     stats.max_iter = iter;
-end
 
+end
 %% ==================== FUNÇÕES AUXILIARES 3D ====================
 
 function rosary = extract_rosary_3d(F, goal_idx)
@@ -702,14 +1180,11 @@ centroides = (vertices(faces(:, 1), :) + vertices(faces(:, 2), :) + vertices(fac
 arvoreKdimensional = KDTreeSearcher(centroides);
 
 %Numero de vizinhos a serem pesquisados
-k_vizinhos = 200;
+k_vizinhos = 10;
 
 %Limites do mapa 3D
-z_minimo = 19;
+z_minimo = 20; %Altura minima do mapa
 z_maximo = 30;
-
-%Margem segura de obstaculos
-margem = 1.0;
 
 expandir_bolha = @(ponto) calcular_raio(ponto, vertices, faces, arvoreKdimensional, k_vizinhos, z_minimo, z_maximo); 
 
@@ -722,7 +1197,7 @@ axis equal
 title("Selecione o local de destino")
 hold on
 
-ponto = (PosInicialDrone - pos_mapa) / escala;
+ponto = (PosInicialDrone) / escala;
 partida = ponto; %Definindo posição inicial do drone como ponto de partida
 %Plotando na representação superior 2D do mapa a localização do drone
 plot(ponto(1), ponto(2), 'go', 'LineWidth', 2)
@@ -743,8 +1218,8 @@ hold off
 %Aplicando os metodos
 
 raio_minimo = 0.4;
-K = 50;
-bias = 0.25;
+K = 10;
+bias = 0.05;
 
 algorithms = {'PFM','GBPF','RBPF','HPF'};
 
